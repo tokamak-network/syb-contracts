@@ -55,7 +55,7 @@ contract NewSybilTest is Test {
         vm.deal(charlie, 100 ether);
     }
 
-    // ========== Constructor & Admin Tests ==========
+    // Constructor and Admin Tests
 
     function testConstructor() public view {
         assertEq(sybil.owner(), owner);
@@ -529,5 +529,590 @@ contract NewSybilTest is Test {
         vm.stopPrank();
 
         assertEq(sybil.balanceOf(alice), depositAmount - withdrawAmount);
+    }
+
+    function testDepositRevertsOnZeroValue() public {
+        vm.prank(alice);
+        vm.expectRevert(INewSybil.BadValue.selector);
+        sybil.deposit{value: 0}();
+    }
+
+    function testWithdrawRevertsOnZeroAmount() public {
+        vm.startPrank(alice);
+        sybil.deposit{value: 1 ether}();
+
+        vm.expectRevert(INewSybil.BadValue.selector);
+        sybil.withdraw(0);
+        vm.stopPrank();
+    }
+
+    function testSetParamsRevertsOnZeroStake() public {
+        vm.expectRevert(INewSybil.BadValue.selector);
+        sybil.setParams(0, DEFAULT_WINDOW);
+    }
+
+    function testSetParamsRevertsOnZeroWindow() public {
+        vm.expectRevert(INewSybil.BadValue.selector);
+        sybil.setParams(DEFAULT_STAKE, 0);
+    }
+
+    function testSetBatchSizeRevertsOnZero() public {
+        vm.expectRevert(INewSybil.BadValue.selector);
+        sybil.setBatchSize(0);
+    }
+
+    function testRequiredStakeWithExistingPair() public {
+        // Create a pair with custom stake
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        // Now requiredStake should return the existing stake
+        assertEq(sybil.requiredStake(alice, bob), DEFAULT_STAKE);
+    }
+
+    function testRequiredStakeForSameAddress() public view {
+        // Should return default stake for same address
+        assertEq(sybil.requiredStake(alice, alice), DEFAULT_STAKE);
+    }
+
+    function testIsFinalizeReadyWhenWindowNotStarted() public {
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        // Window not started yet (only one side vouched)
+        assertFalse(sybil.isFinalizeReady(alice, bob));
+    }
+
+    function testIsFinalizeReadyWhenNotBothFunded() public {
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        assertFalse(sybil.isFinalizeReady(alice, bob));
+    }
+
+    function testIsFinalizeReadyWhenWindowStillOpen() public {
+        // Both vouch to open window
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        // Window still open
+        assertFalse(sybil.isFinalizeReady(alice, bob));
+    }
+
+    function testCancelVouchRevertsNotLoOnly() public {
+        // Both vouch
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        // Wait for window to close
+        vm.warp(block.timestamp + DEFAULT_WINDOW + 1);
+
+        // Try to cancel after finalize (delete the pair first)
+        sybil.finalize(alice, bob);
+
+        // Now try to cancel should fail with StakeZero
+        vm.prank(alice);
+        vm.expectRevert(INewSybil.StakeZero.selector);
+        sybil.cancelVouch(bob);
+    }
+
+    function testCancelVouchRevertsWhenBothFunded() public {
+        // Setup: Alice vouches for Bob
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        // Bob also vouches for Alice (now both funded)
+        vm.startPrank(bob);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        // Window is now open, cancel should fail
+        vm.prank(alice);
+        vm.expectRevert(INewSybil.NoWindow.selector);
+        sybil.cancelVouch(bob);
+    }
+
+    function testCancelVouchNotHiOnlyError() public {
+        // Have bob vouch for alice (bob is the higher address needs specific ordering)
+        address user1;
+        address user2;
+
+        if (alice < bob) {
+            user1 = bob;
+            user2 = alice;
+        } else {
+            user1 = alice;
+            user2 = bob;
+        }
+
+        // lo vouches first
+        vm.startPrank(user2);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(user1);
+        vm.stopPrank();
+
+        // Now hi tries to cancel (but they haven't vouched)
+        // First hi needs to have balance
+        vm.deal(user1, DEFAULT_STAKE);
+        vm.startPrank(user1);
+        sybil.deposit{value: DEFAULT_STAKE}();
+
+        // Try to cancel without having vouched
+        vm.expectRevert(INewSybil.NotHiOnly.selector);
+        sybil.cancelVouch(user2);
+        vm.stopPrank();
+    }
+
+    function testStealRevertsOnNoWindow() public {
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        // Only one side vouched, no window
+        vm.prank(charlie);
+        vm.expectRevert(INewSybil.NoWindow.selector);
+        sybil.steal(alice);
+    }
+
+    function testCloseWithoutStealRevertsOnNoWindow() public {
+        vm.prank(alice);
+        vm.expectRevert(INewSybil.NoWindow.selector);
+        sybil.closeWithoutSteal(bob);
+    }
+
+    function testCloseWithoutStealRevertsAfterWindow() public {
+        // Both vouch to open window
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        // Wait for window to close
+        vm.warp(block.timestamp + DEFAULT_WINDOW + 1);
+
+        vm.prank(alice);
+        vm.expectRevert(INewSybil.PastWindow.selector);
+        sybil.closeWithoutSteal(bob);
+    }
+
+    function testFinalizeRevertsOnNoWindow() public {
+        vm.expectRevert(INewSybil.NoWindow.selector);
+        sybil.finalize(alice, bob);
+    }
+
+    function testFinalizeRevertsWhenPairDeletedAfterFinalize() public {
+        // Create and finalize a link
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + DEFAULT_WINDOW + 1);
+        sybil.finalize(alice, bob);
+
+        // Try to finalize again - pair data is deleted so NoWindow error
+        vm.expectRevert(INewSybil.NoWindow.selector);
+        sybil.finalize(alice, bob);
+    }
+
+    function testScoreSnapshotOf() public view {
+        (uint256 score, uint64 batch) = sybil.scoreSnapshotOf(alice);
+        assertEq(score, 0);
+        assertEq(batch, 0);
+    }
+
+    function testPendingEdgesWithNoEdges() public view {
+        assertEq(sybil.pendingEdges(), 0);
+    }
+
+
+    function testSubmitBatch() public {
+        // Create and finalize a link first
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + DEFAULT_WINDOW + 1);
+        sybil.finalize(alice, bob);
+
+        // Now we have 1 pending edge
+        assertEq(sybil.pendingEdges(), 1);
+
+        bytes32 newGraph = keccak256("newGraph");
+        bytes32 newScore = keccak256("newScore");
+        bytes memory proof = "";
+
+        sybil.submitBatch(newGraph, newScore, 1, proof);
+
+        assertEq(sybil.latestGraphRoot(), newGraph);
+        assertEq(sybil.scoreRootAt(0), newScore);
+        assertEq(sybil.latestBatchId(), 0);
+        assertEq(sybil.batchId(), 1);
+        assertEq(sybil.pendingEdges(), 0);
+    }
+
+    function testSubmitBatchRevertsOnZeroN() public {
+        vm.expectRevert(INewSybil.BadValue.selector);
+        sybil.submitBatch(bytes32(0), bytes32(0), 0, "");
+    }
+
+    function testSubmitBatchRevertsOnEmptyBatch() public {
+        // Try to submit when there are no edges
+        vm.expectRevert(INewSybil.EmptyBatch.selector);
+        sybil.submitBatch(bytes32(0), bytes32(0), 1, "");
+    }
+
+    function testSubmitBatchRevertsWhenNExceedsBatchSize() public {
+        // Create pending edges
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + DEFAULT_WINDOW + 1);
+        sybil.finalize(alice, bob);
+
+        // Try to submit with n > batchSize
+        vm.expectRevert(INewSybil.BadValue.selector);
+        sybil.submitBatch(bytes32(0), bytes32(0), DEFAULT_BATCH_SIZE + 1, "");
+    }
+
+    function testSubmitBatchRevertsWhenNExceedsAvailable() public {
+        // Create 1 pending edge
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + DEFAULT_WINDOW + 1);
+        sybil.finalize(alice, bob);
+
+        // Try to submit 2 edges when only 1 is available
+        vm.expectRevert(INewSybil.EmptyBatch.selector);
+        sybil.submitBatch(bytes32(0), bytes32(0), 2, "");
+    }
+
+    function testSubmitMultipleBatches() public {
+        // Create multiple links
+        address[] memory users = new address[](4);
+        users[0] = alice;
+        users[1] = bob;
+        users[2] = charlie;
+        users[3] = makeAddr("dave");
+        vm.deal(users[3], 100 ether);
+
+        // Alice-Bob link
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + DEFAULT_WINDOW + 1);
+        sybil.finalize(alice, bob);
+
+        // Alice-Charlie link
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(charlie);
+        vm.stopPrank();
+
+        vm.startPrank(charlie);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + DEFAULT_WINDOW + 1);
+        sybil.finalize(alice, charlie);
+
+        assertEq(sybil.pendingEdges(), 2);
+
+        // Submit first batch with 1 edge
+        bytes32 graph1 = keccak256("graph1");
+        bytes32 score1 = keccak256("score1");
+        sybil.submitBatch(graph1, score1, 1, "");
+
+        assertEq(sybil.pendingEdges(), 1);
+        assertEq(sybil.batchId(), 1);
+
+        // Submit second batch
+        bytes32 graph2 = keccak256("graph2");
+        bytes32 score2 = keccak256("score2");
+        sybil.submitBatch(graph2, score2, 1, "");
+
+        assertEq(sybil.pendingEdges(), 0);
+        assertEq(sybil.batchId(), 2);
+    }
+
+    function testVouchInsufficientBalanceError() public {
+        vm.prank(alice);
+        vm.expectRevert(INewSybil.InsufficientBalance.selector);
+        sybil.vouch(bob);
+    }
+
+    function testReceiveFunctionWithValue() public {
+        uint256 sendAmount = 2 ether;
+        vm.deal(alice, sendAmount);
+
+        vm.prank(alice);
+        (bool success, ) = address(sybil).call{value: sendAmount}("");
+        require(success, "Transfer failed");
+
+        assertEq(sybil.balanceOf(alice), sendAmount);
+    }
+
+    function testMultipleDeposits() public {
+        vm.startPrank(alice);
+        sybil.deposit{value: 1 ether}();
+        assertEq(sybil.balanceOf(alice), 1 ether);
+
+        sybil.deposit{value: 2 ether}();
+        assertEq(sybil.balanceOf(alice), 3 ether);
+
+        sybil.deposit{value: 0.5 ether}();
+        assertEq(sybil.balanceOf(alice), 3.5 ether);
+        vm.stopPrank();
+    }
+
+    function testVouchWithExactPayment() public {
+        vm.startPrank(alice);
+        // Send exact amount needed
+        sybil.vouch{value: DEFAULT_STAKE}(bob);
+
+        // Balance should be 0 after stake deduction
+        assertEq(sybil.balanceOf(alice), 0);
+        vm.stopPrank();
+    }
+
+    function testVouchWithExcessPayment() public {
+        vm.startPrank(alice);
+        // Send more than needed
+        uint256 excess = DEFAULT_STAKE + 1 ether;
+        sybil.vouch{value: excess}(bob);
+
+        // Excess should remain in balance
+        assertEq(sybil.balanceOf(alice), 1 ether);
+        vm.stopPrank();
+    }
+
+    function testStealDeletesPairData() public {
+        // Both vouch to open window
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        (address lo, address hi) = alice < bob ? (alice, bob) : (bob, alice);
+
+        // Verify pair exists
+        (uint64 windowStart, , , uint128 stakeAmt) = sybil.pairs(lo, hi);
+        assertTrue(windowStart > 0);
+        assertTrue(stakeAmt > 0);
+
+        // Alice steals
+        vm.prank(alice);
+        sybil.steal(bob);
+
+        // Verify pair is deleted
+        (windowStart, , , stakeAmt) = sybil.pairs(lo, hi);
+        assertEq(windowStart, 0);
+        assertEq(stakeAmt, 0);
+    }
+
+    function testCloseWithoutStealDeletesPairData() public {
+        // Both vouch to open window
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        (address lo, address hi) = alice < bob ? (alice, bob) : (bob, alice);
+
+        // Close without stealing
+        vm.prank(alice);
+        sybil.closeWithoutSteal(bob);
+
+        // Verify pair is deleted
+        (uint64 windowStart, , , uint128 stakeAmt) = sybil.pairs(lo, hi);
+        assertEq(windowStart, 0);
+        assertEq(stakeAmt, 0);
+    }
+
+    function testFinalizeDeletesPairData() public {
+        // Both vouch to open window
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        (address lo, address hi) = alice < bob ? (alice, bob) : (bob, alice);
+
+        vm.warp(block.timestamp + DEFAULT_WINDOW + 1);
+        sybil.finalize(alice, bob);
+
+        // Verify pair is deleted
+        (uint64 windowStart, , , uint128 stakeAmt) = sybil.pairs(lo, hi);
+        assertEq(windowStart, 0);
+        assertEq(stakeAmt, 0);
+
+        // But link should exist
+        assertTrue(sybil.isLinked(lo, hi));
+    }
+
+    function testAccountIdxIncrementsCorrectly() public {
+        assertEq(sybil.nextIdx(), 1);
+        assertEq(sybil.totalAccounts(), 0);
+
+        // Create account for alice
+        vm.startPrank(alice);
+        sybil.vouch{value: DEFAULT_STAKE}(bob);
+        vm.stopPrank();
+
+        // Alice and Bob should have indices
+        assertEq(sybil.accountIdx(alice), 1);
+        assertEq(sybil.accountIdx(bob), 2);
+        assertEq(sybil.nextIdx(), 3);
+        assertEq(sybil.totalAccounts(), 2);
+
+        // Create account for charlie
+        vm.startPrank(charlie);
+        sybil.vouch{value: DEFAULT_STAKE}(alice);
+        vm.stopPrank();
+
+        assertEq(sybil.accountIdx(charlie), 3);
+        assertEq(sybil.totalAccounts(), 3);
+    }
+
+    function testHasLinkReturnsFalseForSameAddress() public view {
+        assertFalse(sybil.hasLink(alice, alice));
+    }
+
+    function testHasLinkIsSymmetric() public {
+        // Create link
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + DEFAULT_WINDOW + 1);
+        sybil.finalize(alice, bob);
+
+        // Check both directions
+        assertTrue(sybil.hasLink(alice, bob));
+        assertTrue(sybil.hasLink(bob, alice));
+    }
+
+    function testBatchSubmittedEvent() public {
+        // Create and finalize a link
+        vm.startPrank(alice);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(bob);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        sybil.deposit{value: DEFAULT_STAKE}();
+        sybil.vouch(alice);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + DEFAULT_WINDOW + 1);
+        sybil.finalize(alice, bob);
+
+        bytes32 newGraph = keccak256("newGraph");
+        bytes32 newScore = keccak256("newScore");
+
+        vm.expectEmit(true, false, false, false);
+        emit INewSybil.BatchSubmitted(0, 1, bytes32(0), newGraph, newScore, "");
+        sybil.submitBatch(newGraph, newScore, 1, "");
+    }
+
+    function testParamsUpdatedEvent() public {
+        uint256 newStake = 0.02 ether;
+        uint64 newWindow = 300;
+
+        vm.expectEmit(false, false, false, true);
+        emit INewSybil.ParamsUpdated(newStake, newWindow);
+        sybil.setParams(newStake, newWindow);
+    }
+
+    function testBatchSizeUpdatedEvent() public {
+        uint32 newBatchSize = 200;
+
+        vm.expectEmit(false, false, false, true);
+        emit INewSybil.BatchSizeUpdated(newBatchSize);
+        sybil.setBatchSize(newBatchSize);
     }
 }
