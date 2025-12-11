@@ -1,0 +1,61 @@
+specVersion: 0.0.5
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: NewSybil
+    network: sepolia
+    source:
+      address: "0x7D6bf8923E9532625dD33F18De6bc9F628c175AC"
+      abi: NewSybil
+      startBlock: 9794615
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - ContractConfig
+        - Account
+        - Deposit
+        - Withdrawal
+        - Vouch
+        - Pair
+        - WindowOpened
+        - Link
+        - Steal
+        - CloseNoLink
+        - Batch
+        - ScoreSnapshot
+        - ParamsUpdate
+        - BatchSizeUpdate
+        - GlobalStats
+      abis:
+        - name: NewSybil
+          file: ./abis/NewSybil.json
+      eventHandlers:
+        - event: ParamsUpdated(uint256,uint64)
+          handler: handleParamsUpdated
+        - event: BatchSizeUpdated(uint32)
+          handler: handleBatchSizeUpdated
+        - event: Deposited(indexed address,uint256)
+          handler: handleDeposited
+        - event: Withdrawn(indexed address,uint256)
+          handler: handleWithdrawn
+        - event: AccountCreated(indexed address,indexed uint32)
+          handler: handleAccountCreated
+        - event: Vouched(indexed address,indexed address,uint256)
+          handler: handleVouched
+        - event: WindowOpened(indexed address,indexed address,uint64,uint64)
+          handler: handleWindowOpened
+        - event: Stolen(indexed address,indexed address,uint256)
+          handler: handleStolen
+        - event: ClosedNoLink(indexed address,indexed address)
+          handler: handleClosedNoLink
+        - event: Linked(indexed address,indexed address,uint64,uint64)
+          handler: handleLinked
+        - event: BatchSubmitted(indexed uint64,uint32,bytes32,bytes32,bytes32,bytes)
+          handler: handleBatchSubmitted
+        - event: ScoreSynced(indexed address,indexed uint64,uint256)
+          handler: handleScoreSynced
+      file: ./src/mapping.ts
+

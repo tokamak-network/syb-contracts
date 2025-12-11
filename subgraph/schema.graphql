@@ -1,0 +1,197 @@
+# Global contract configuration
+type ContractConfig @entity {
+  id: ID! # "config"
+  owner: Bytes!
+  stakeAmount: BigInt!
+  windowTime: BigInt!
+  batchSize: Int!
+  totalAccounts: Int!
+  latestBatchId: BigInt!
+  latestGraphRoot: Bytes
+  nextEdgeId: Int!
+  lastForgedId: Int!
+}
+
+# User account
+type Account @entity {
+  id: ID! # address
+  address: Bytes!
+  index: Int! # accountIdx from contract
+  balance: BigInt!
+  createdAt: BigInt!
+  createdTx: Bytes!
+  
+  # Relations
+  vouchesGiven: [Vouch!]! @derivedFrom(field: "attester")
+  vouchesReceived: [Vouch!]! @derivedFrom(field: "subject")
+  linksAsLo: [Link!]! @derivedFrom(field: "lo")
+  linksAsHi: [Link!]! @derivedFrom(field: "hi")
+  deposits: [Deposit!]! @derivedFrom(field: "user")
+  withdrawals: [Withdrawal!]! @derivedFrom(field: "user")
+  scoreSnapshots: [ScoreSnapshot!]! @derivedFrom(field: "user")
+  stealsCommitted: [Steal!]! @derivedFrom(field: "thief")
+  stealsVictim: [Steal!]! @derivedFrom(field: "victim")
+}
+
+# Deposit event
+type Deposit @entity {
+  id: ID! # tx hash + log index
+  user: Account!
+  amount: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+# Withdrawal event
+type Withdrawal @entity {
+  id: ID! # tx hash + log index
+  user: Account!
+  amount: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+# Vouch represents a vouching action (before link is finalized)
+type Vouch @entity {
+  id: ID! # tx hash + log index
+  attester: Account!
+  subject: Account!
+  stake: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+# Pair state (between vouch and finalize)
+type Pair @entity {
+  id: ID! # lo address + hi address
+  lo: Account!
+  hi: Account!
+  loFunded: Boolean!
+  hiFunded: Boolean!
+  stakeAmount: BigInt!
+  windowStart: BigInt
+  windowEnd: BigInt
+  status: PairStatus!
+  createdAt: BigInt!
+  updatedAt: BigInt!
+}
+
+enum PairStatus {
+  PENDING     # One side has vouched
+  WINDOW_OPEN # Both vouched, in steal window
+  LINKED      # Finalized successfully
+  STOLEN      # One party stole
+  CANCELLED   # Cancelled without link
+}
+
+# Window opened event
+type WindowOpened @entity {
+  id: ID! # tx hash + log index
+  lo: Account!
+  hi: Account!
+  start: BigInt!
+  end: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+# Finalized link between two accounts
+type Link @entity {
+  id: ID! # lo address + hi address
+  lo: Account!
+  hi: Account!
+  loIndex: Int!
+  hiIndex: Int!
+  windowStart: BigInt!
+  windowEnd: BigInt!
+  createdAt: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+  edgeId: Int # assigned after finalize
+  forgedInBatch: Batch # null until processed
+}
+
+# Steal event
+type Steal @entity {
+  id: ID! # tx hash + log index
+  thief: Account!
+  victim: Account!
+  payout: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+# Close without link event
+type CloseNoLink @entity {
+  id: ID! # tx hash + log index
+  caller: Account!
+  counterparty: Account!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+# ZK batch submission
+type Batch @entity {
+  id: ID! # batchId
+  batchId: BigInt!
+  edgeCount: Int!
+  storageHash: Bytes!
+  graphRoot: Bytes!
+  scoreRoot: Bytes!
+  edgesPacked: Bytes!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+  
+  # Edges processed in this batch
+  edges: [Link!]! @derivedFrom(field: "forgedInBatch")
+}
+
+# Score snapshot for user
+type ScoreSnapshot @entity {
+  id: ID! # user address + batchId
+  user: Account!
+  batchId: BigInt!
+  score: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+# Params update event
+type ParamsUpdate @entity {
+  id: ID! # tx hash + log index
+  stakeAmount: BigInt!
+  windowTime: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+# Batch size update event
+type BatchSizeUpdate @entity {
+  id: ID! # tx hash + log index
+  batchSize: Int!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  transactionHash: Bytes!
+}
+
+# Global stats
+type GlobalStats @entity {
+  id: ID! # "stats"
+  totalDeposits: BigInt!
+  totalWithdrawals: BigInt!
+  totalVouches: Int!
+  totalLinks: Int!
+  totalSteals: Int!
+  totalBatches: Int!
+  totalAccounts: Int!
+}
+
