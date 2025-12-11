@@ -27,7 +27,7 @@ npm run build
 
 ## Deploy
 
-### Option 1: Goldsky (Recommended - Free Tier)
+### Goldsky (Recommended - Free Tier)
 
 1. Install Goldsky CLI:
 ```bash
@@ -42,30 +42,6 @@ goldsky login
 3. Deploy:
 ```bash
 npm run deploy:goldsky
-```
-
-### Option 2: The Graph Studio
-
-1. Create a subgraph on [The Graph Studio](https://thegraph.com/studio/)
-
-2. Authenticate:
-```bash
-graph auth --studio <YOUR_DEPLOY_KEY>
-```
-
-3. Deploy:
-```bash
-npm run deploy:studio
-```
-
-### Option 3: Local Graph Node (Development)
-
-1. Start a local Graph Node (requires Docker)
-
-2. Create and deploy:
-```bash
-npm run create:local
-npm run deploy:local
 ```
 
 ## Indexed Events
