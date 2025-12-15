@@ -21,6 +21,8 @@ interface INewSybil {
     error EthXferFail();
     error MissingIdx();
     error InsufficientBalance();
+    error NotParticipant();
+    error NotLinked();
 
     // Events
     event ParamsUpdated(uint256 stakeS, uint64 windowT);
@@ -60,7 +62,8 @@ interface INewSybil {
         uint64 indexed batchId,
         uint256 score
     );
-
+     event LinkCancelled(address indexed lo, address indexed hi, address indexed caller);
+    
     // Structs
     struct PairPacked {
         uint64 windowStart;
@@ -96,6 +99,8 @@ interface INewSybil {
     function closeWithoutSteal(address counterparty) external;
 
     function finalize(address a, address b) external;
+
+    function cancelLink(address counterparty) external;
 
     // Batch Submission
     function submitBatch(
@@ -141,7 +146,7 @@ interface INewSybil {
 
     function latestBatchId() external view returns (uint64);
 
-    function unforged(uint32 edgeId) external view returns (uint64);
+    function unforged(uint32 edgeId) external view returns (uint72);
 
     function nextEdgeId() external view returns (uint32);
 

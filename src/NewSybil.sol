@@ -116,7 +116,7 @@ contract NewSybil is INewSybil {
     mapping(uint64 => bytes32) public scoreRootAt; // batchId => scoreRoot
     uint64 public latestBatchId;
 
-    mapping(uint32 => uint64) public unforged;
+    mapping(uint32 => uint72) public unforged;
     uint32 public nextEdgeId = 1; // next id to write
     uint32 public lastForgedId = 0; // last processed id
     uint64 public batchId = 0; // increments each submit
@@ -279,7 +279,24 @@ contract NewSybil is INewSybil {
         if (ilo == 0 || ihi == 0) revert MissingIdx();
 
         uint32 id = nextEdgeId++;
-        unforged[id] = (uint64(ilo) << 32) | uint64(ihi);
+        unforged[id] = (uint72(ilo) << 32) | uint72(ihi);
+    }
+
+    function cancelLink(address counterparty) external nonReentrant {
+        (address lo, address hi, ) = _addrOrder(msg.sender, counterparty);
+
+        if (!isLinked[lo][hi]) revert NotLinked();
+
+        isLinked[lo][hi] = false;
+
+        emit LinkCancelled(lo, hi, msg.sender);
+
+        uint32 ilo = accountIdx[lo];
+        uint32 ihi = accountIdx[hi];
+        if (ilo == 0 || ihi == 0) revert MissingIdx();
+
+        uint32 id = nextEdgeId++;
+        unforged[id] = (uint72(1) << 64) | (uint72(ilo) << 32) | uint72(ihi);
     }
 
     function submitBatch(
@@ -338,13 +355,14 @@ contract NewSybil is INewSybil {
         uint32 start,
         uint32 n
     ) internal view returns (bytes memory edgesPacked, bytes32 storageHash) {
-        edgesPacked = new bytes(uint256(n) * 8);
+        edgesPacked = new bytes(uint256(n) * 9);
         uint256 off = 0;
 
         for (uint32 i = 0; i < n; ++i) {
-            uint64 w = unforged[start + i];
+            uint72 w = unforged[start + i];
             uint32 ilo = uint32(w >> 32);
             uint32 ihi = uint32(w);
+            uint8 flag = uint8(w >> 64);
 
             edgesPacked[off + 0] = bytes1(uint8(ilo >> 24));
             edgesPacked[off + 1] = bytes1(uint8(ilo >> 16));
@@ -354,14 +372,14 @@ contract NewSybil is INewSybil {
             edgesPacked[off + 5] = bytes1(uint8(ihi >> 16));
             edgesPacked[off + 6] = bytes1(uint8(ihi >> 8));
             edgesPacked[off + 7] = bytes1(uint8(ihi));
-            off += 8;
+            edgesPacked[off + 8] = bytes1(flag);
+            off += 9;
         }
 
         storageHash = keccak256(
             abi.encodePacked(batchId, start, n, edgesPacked)
         );
     }
-
     function _emitBatchSubmitted(
         uint32 n,
         bytes32 storageHash,
