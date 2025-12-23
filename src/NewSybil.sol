@@ -320,7 +320,7 @@ contract NewSybil is INewSybil {
             bytes32 storageHash
         ) = _buildEdgesAndStorageHash(start, n);
 
-        bytes32 pubInputs = keccak256(
+        bytes32 pubInputs = sha256(
             abi.encodePacked(
                 latestGraphRoot,
                 scoreRootAt[latestBatchId],
@@ -376,7 +376,7 @@ contract NewSybil is INewSybil {
             off += 9;
         }
 
-        storageHash = keccak256(
+        storageHash = sha256(
             abi.encodePacked(batchId, start, n, edgesPacked)
         );
     }
